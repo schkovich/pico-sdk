@@ -88,18 +88,17 @@ static void async_context_threadsafe_background_lock_check(async_context_t *self
 
 #if ASYNC_CONTEXT_THREADSAFE_BACKGROUND_MULTI_CORE
 typedef struct sync_func_call{
-    async_when_pending_worker_t worker;
+    async_at_time_worker_t worker;
     semaphore_t sem;
     uint32_t (*func)(void *param);
     void *param;
     uint32_t rc;
 } sync_func_call_t;
 
-static void handle_sync_func_call(async_context_t *context, async_when_pending_worker_t *worker) {
+static void handle_sync_func_call(async_context_t *context, async_at_time_worker_t *worker) {
     sync_func_call_t *call = (sync_func_call_t *)worker;
     call->rc = call->func(call->param);
     sem_release(&call->sem);
-    async_context_remove_when_pending_worker(context, worker);
 }
 #endif
 
@@ -145,8 +144,7 @@ uint32_t async_context_threadsafe_background_execute_sync(async_context_t *self_
         call.func = func;
         call.param = param;
         sem_init(&call.sem, 0, 1);
-        async_context_add_when_pending_worker(self_base, &call.worker);
-        async_context_set_work_pending(self_base, &call.worker);
+        async_context_add_at_time_worker_in_ms(self_base, &call.worker, 0);
         sem_acquire_blocking(&call.sem);
         return call.rc;
     }
