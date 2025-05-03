@@ -6,6 +6,9 @@
 
 #include <string.h>
 #include "pico/async_context_threadsafe_background.h"
+
+#include <stdio.h>
+
 #include "pico/async_context_base.h"
 #include "pico/sync.h"
 #include "hardware/irq.h"
@@ -138,7 +141,28 @@ uint32_t async_context_threadsafe_background_execute_sync(async_context_t *self_
     async_context_threadsafe_background_t *self = (async_context_threadsafe_background_t*)self_base;
 #if ASYNC_CONTEXT_THREADSAFE_BACKGROUND_MULTI_CORE
     if (self_base->core_num != get_core_num()) {
-        hard_assert(!recursive_mutex_enter_count(&self->lock_mutex));
+        if (self_base->core_num != recursive_mutex_owner(&self->lock_mutex)) {
+            /* Old behaviour: abort if count is 1            */
+            if (recursive_mutex_enter_count(&self->lock_mutex))
+            {
+                printf("Old assert! The owner still has permit.\n");
+                return PICO_ERROR_INVALID_STATE;
+            }
+        } else {
+            /* New behaviour: patiently wait until the lock is released, then carry  *
+            *                on with the normal zero‑delay‑worker path.             */
+            /* Pinned core is busy – wait a *little* while                  */
+            const absolute_time_t t0 = make_timeout_time_us(1000);          /* 10 ms guard */
+            do {
+                tight_loop_contents();
+            } while (recursive_mutex_enter_count(&self->lock_mutex) != 0 &&
+                     absolute_time_diff_us(get_absolute_time(), t0) > 0);
+            /* still owned after timeout? treat as fatal                    */
+            if (recursive_mutex_enter_count(&self->lock_mutex)) {
+                printf("New assert! The owner still has a permit after timeout!\n");
+                return PICO_ERROR_INVALID_STATE;
+            }
+        }
         sync_func_call_t call = {0};
         call.worker.do_work = handle_sync_func_call;
         call.func = func;
@@ -364,5 +388,3 @@ static const async_context_type_t template = {
         .wait_for_work_until = async_context_threadsafe_background_wait_for_work_until,
         .deinit = async_context_threadsafe_background_deinit,
 };
-
-
