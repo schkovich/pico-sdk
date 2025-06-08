@@ -9,7 +9,6 @@
 #include "pico/async_context_base.h"
 #include "pico/sync.h"
 #include "hardware/irq.h"
-#include <stdio.h>
 
 static const async_context_type_t template;
 static async_context_threadsafe_background_t *async_contexts_by_user_irq[NUM_USER_IRQS];
@@ -140,18 +139,8 @@ uint32_t async_context_threadsafe_background_execute_sync(async_context_t *self_
     async_context_threadsafe_background_t *self = (async_context_threadsafe_background_t*)self_base;
 #if ASYNC_CONTEXT_THREADSAFE_BACKGROUND_MULTI_CORE
     if (self_base->core_num != get_core_num()) {
-        recursive_mutex_t mutex_state = self->lock_mutex;  // Atomic copy of entire mutex state
-        if (mutex_state.enter_count) {
-            printf("\n=== execute_sync state [core%d] ===\n", get_core_num());
-            printf("async_ctx core: %d\n", self_base->core_num);
-            printf("enter_count at check: %d\n", mutex_state.enter_count);
-            printf("owner at check: %d\n", mutex_state.owner);
-            printf("enter_count now: %d\n", recursive_mutex_enter_count(&self->lock_mutex));
-            printf("owner now: %d\n", recursive_mutex_owner(&self->lock_mutex));
-            printf("=============================\n");
-            printf("WOULD HAVE ASSERTED HERE - but we're debugging!\n");
-            return PICO_ERROR_INVALID_STATE;
-        }
+        volatile recursive_mutex_t mutex_state = self->lock_mutex;  // Atomic copy of entire mutex state
+        hard_assert(!recursive_mutex_enter_count((recursive_mutex_t *)&mutex_state));
         sync_func_call_t call = {0};
         call.worker.do_work = handle_sync_func_call;
         call.func = func;
